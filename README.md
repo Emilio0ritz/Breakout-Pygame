@@ -1,107 +1,32 @@
-"""Game feel: particles, screen shake, and synthesized sound (no asset files needed)."""
-import math
-import random
+# Breakout
 
-import numpy as np
-import pygame
+A small, finished arcade game built with **Python + PyGame** to demonstrate game-loop fundamentals: fixed-timestep updates, collision handling, a state machine, and "game feel" effects.
 
-import config as C
+![Gameplay](screenshot.png)
 
+## Run It
 
-# ---------------------------------------------------------------- particles
-class Particle:
-    def __init__(self, x, y, color):
-        angle = random.uniform(0, math.tau)
-        speed = random.uniform(60, 260)
-        self.x, self.y = x, y
-        self.vx = math.cos(angle) * speed
-        self.vy = math.sin(angle) * speed
-        self.life = random.uniform(0.25, 0.6)
-        self.age = 0.0
-        self.color = color
-        self.size = random.randint(2, 4)
+    pip install -r requirements.txt
+    python main.py
 
-    def update(self, dt):
-        self.age += dt
-        self.x += self.vx * dt
-        self.y += self.vy * dt
-        self.vy += 500 * dt  # gravity
+**Controls:** ← / → or A / D to move · SPACE to launch · R to restart
 
-    @property
-    def dead(self):
-        return self.age >= self.life
+## What's Inside
 
-    def draw(self, surf):
-        fade = max(0.0, 1.0 - self.age / self.life)
-        col = tuple(int(c * fade) for c in self.color)
-        pygame.draw.rect(surf, col, (int(self.x), int(self.y), self.size, self.size))
+| File | Responsibility |
+|------|----------------|
+| `main.py` | Entry point |
+| `game.py` | State machine (ready / playing / game over / win) and the update–draw loop |
+| `entities.py` | Paddle, ball, and brick wall — movement and collision response |
+| `effects.py` | Particles, screen shake, and runtime-synthesized sound (zero binary assets) |
+| `config.py` | Every tunable value in one place |
 
+## Design Notes
 
-class ParticleSystem:
-    def __init__(self):
-        self.particles = []
+- **Delta-time movement** with a clamped timestep so physics stay stable through lag spikes
+- **Angle-based paddle bounces** — where the ball strikes the paddle controls the exit angle
+- **Axis-of-least-penetration brick collision** for believable side vs. top bounces
+- **Juice**: screen shake, particle bursts on brick destruction, and per-hit ball speedup
+- **All audio is synthesized at startup** with NumPy waveforms — the repo ships no asset files
 
-    def burst(self, x, y, color, n=C.PARTICLES_PER_BRICK):
-        self.particles.extend(Particle(x, y, color) for _ in range(n))
-
-    def update(self, dt):
-        for p in self.particles:
-            p.update(dt)
-        self.particles = [p for p in self.particles if not p.dead]
-
-    def draw(self, surf):
-        for p in self.particles:
-            p.draw(surf)
-
-
-# ---------------------------------------------------------------- screen shake
-class ScreenShake:
-    def __init__(self):
-        self.magnitude = 0.0
-
-    def kick(self, amount):
-        self.magnitude = max(self.magnitude, amount)
-
-    def update(self, dt):
-        self.magnitude = max(0.0, self.magnitude - 30 * dt)
-
-    @property
-    def offset(self):
-        if self.magnitude <= 0:
-            return 0, 0
-        m = self.magnitude
-        return random.uniform(-m, m), random.uniform(-m, m)
-
-
-# ---------------------------------------------------------------- sound
-def _tone(freq, duration, volume=0.4, sample_rate=22050, shape="sine"):
-    """Synthesize a short tone as a pygame Sound (stereo int16)."""
-    t = np.linspace(0, duration, int(sample_rate * duration), endpoint=False)
-    if shape == "square":
-        wave = np.sign(np.sin(2 * np.pi * freq * t))
-    else:
-        wave = np.sin(2 * np.pi * freq * t)
-    envelope = np.exp(-4 * t / duration)  # quick decay, softer click
-    samples = (wave * envelope * volume * 32767).astype(np.int16)
-    stereo = np.column_stack([samples, samples])
-    return pygame.sndarray.make_sound(np.ascontiguousarray(stereo))
-
-
-class Sounds:
-    """All audio synthesized at startup - the repo ships zero binary assets."""
-
-    def __init__(self):
-        self.enabled = True
-        try:
-            pygame.mixer.init(frequency=22050, size=-16, channels=2)
-            self.brick = _tone(660, 0.07, shape="square", volume=0.25)
-            self.paddle = _tone(330, 0.06, volume=0.3)
-            self.wall = _tone(220, 0.05, volume=0.2)
-            self.death = _tone(110, 0.4, volume=0.4)
-            self.win = _tone(880, 0.5, volume=0.35)
-        except pygame.error:
-            self.enabled = False  # no audio device; play silently
-
-    def play(self, name):
-        if self.enabled:
-            getattr(self, name).play()
+Built in a weekend to demonstrate game-loop fundamentals across engines I'm actively learning (PyGame → Godot).
