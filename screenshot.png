@@ -1,0 +1,141 @@
+"""Core game: state machine (READY / PLAYING / GAME_OVER / WIN) and update/draw loop."""
+import pygame
+
+import config as C
+from entities import Paddle, Ball, build_brick_wall
+from effects import ParticleSystem, ScreenShake, Sounds
+
+READY, PLAYING, GAME_OVER, WIN = "ready", "playing", "game_over", "win"
+
+
+class Game:
+    def __init__(self):
+        pygame.init()
+        self.screen = pygame.display.set_mode((C.WIDTH, C.HEIGHT))
+        pygame.display.set_caption(C.TITLE)
+        self.clock = pygame.time.Clock()
+        self.font_big = pygame.font.SysFont("arial", 56, bold=True)
+        self.font = pygame.font.SysFont("arial", 24)
+        self.world = pygame.Surface((C.WIDTH, C.HEIGHT))
+        self.sounds = Sounds()
+        self.reset()
+
+    def reset(self):
+        self.paddle = Paddle()
+        self.ball = Ball()
+        self.bricks = build_brick_wall()
+        self.particles = ParticleSystem()
+        self.shake = ScreenShake()
+        self.score = 0
+        self.lives = C.START_LIVES
+        self.state = READY
+
+    # ------------------------------------------------------------- update
+    def update(self, dt):
+        keys = pygame.key.get_pressed()
+        self.particles.update(dt)
+        self.shake.update(dt)
+
+        if self.state != PLAYING:
+            return
+
+        self.paddle.update(dt, keys)
+
+        self.ball.update(dt)
+
+        # Paddle collision (only while moving downward)
+        if self.ball.vy > 0 and self.ball.rect.colliderect(self.paddle.rect):
+            self.ball.bounce_off_paddle(self.paddle)
+            self.sounds.play("paddle")
+
+        # Brick collisions
+        for brick in self.bricks:
+            if brick.alive and self.ball.rect.colliderect(brick.rect):
+                brick.alive = False
+                self.score += C.POINTS_PER_BRICK
+                self._bounce_off_brick(brick)
+                self.particles.burst(*brick.rect.center, brick.color)
+                self.shake.kick(C.SHAKE_BRICK)
+                self.sounds.play("brick")
+                self.ball.speed_up()
+                break  # one brick per frame keeps physics stable
+
+        # Ball lost
+        if self.ball.y - C.BALL_RADIUS > C.HEIGHT:
+            self.lives -= 1
+            self.shake.kick(C.SHAKE_DEATH)
+            self.sounds.play("death")
+            if self.lives <= 0:
+                self.state = GAME_OVER
+            else:
+                self.ball.reset()
+                self.state = READY
+
+        # Win check
+        if all(not b.alive for b in self.bricks):
+            self.state = WIN
+            self.sounds.play("win")
+
+    def _bounce_off_brick(self, brick):
+        """Reflect on the axis of least penetration for a believable bounce."""
+        b, r = self.ball, brick.rect
+        overlap_x = min(b.rect.right - r.left, r.right - b.rect.left)
+        overlap_y = min(b.rect.bottom - r.top, r.bottom - b.rect.top)
+        if overlap_x < overlap_y:
+            b.vx = -b.vx
+        else:
+            b.vy = -b.vy
+
+    # ------------------------------------------------------------- draw
+    def draw(self):
+        w = self.world
+        w.fill(C.BG_COLOR)
+
+        for brick in self.bricks:
+            brick.draw(w)
+        self.paddle.draw(w)
+        self.ball.draw(w)
+        self.particles.draw(w)
+
+        hud = self.font.render(f"Score {self.score}    Lives {self.lives}", True, C.WHITE)
+        w.blit(hud, (16, 12))
+
+        if self.state == READY:
+            self._center_text(w, "Press SPACE to launch", self.font)
+        elif self.state == GAME_OVER:
+            self._center_text(w, "GAME OVER", self.font_big, dy=-30)
+            self._center_text(w, f"Final score {self.score} - press R to restart", self.font, dy=30)
+        elif self.state == WIN:
+            self._center_text(w, "YOU WIN!", self.font_big, dy=-30)
+            self._center_text(w, f"Score {self.score} - press R to play again", self.font, dy=30)
+
+        ox, oy = self.shake.offset
+        self.screen.fill((0, 0, 0))
+        self.screen.blit(w, (ox, oy))
+        pygame.display.flip()
+
+    def _center_text(self, surf, text, font, dy=0):
+        img = font.render(text, True, C.ACCENT)
+        surf.blit(img, img.get_rect(center=(C.WIDTH // 2, C.HEIGHT // 2 + dy)))
+
+    # ------------------------------------------------------------- loop
+    def handle_event(self, event):
+        if event.type == pygame.KEYDOWN:
+            if event.key == pygame.K_SPACE and self.state == READY:
+                self.state = PLAYING
+            elif event.key == pygame.K_r and self.state in (GAME_OVER, WIN):
+                self.reset()
+
+    def run(self):
+        running = True
+        while running:
+            dt = self.clock.tick(C.FPS) / 1000.0
+            dt = min(dt, 1 / 30)  # clamp to avoid tunneling on lag spikes
+            for event in pygame.event.get():
+                if event.type == pygame.QUIT:
+                    running = False
+                else:
+                    self.handle_event(event)
+            self.update(dt)
+            self.draw()
+        pygame.quit()
